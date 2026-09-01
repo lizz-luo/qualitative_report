@@ -90,14 +90,8 @@ def create_word_document(tables):
         table.alignment = WD_TABLE_ALIGNMENT.CENTER
 
         # 設定欄位寬度
-        for column in table.columns:
-            for cell in column.cells:
-                paragraph = cell.paragraphs[0]
-                paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
-                if column.index == 0:
-                    cell.width = Inches(2.5)
-                else:
-                    cell.width = Inches(5.0)
+        table.columns[0].width = Inches(2.5)
+        table.columns[1].width = Inches(5.0)
 
         # 填入標題列
         header_cells = table.rows[0].cells
@@ -107,10 +101,10 @@ def create_word_document(tables):
         # 設定標題列格式
         for cell in header_cells:
             for paragraph in cell.paragraphs:
+                paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
                 for run in paragraph.runs:
                     run.bold = True
                     run.font.size = Pt(10)
-                paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
         # 填入資料列
         for row_index, (_, row_data) in enumerate(df.iterrows(), start=1):
