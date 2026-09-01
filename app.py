@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import re
 import io
 import pyreadstat
 
@@ -45,7 +44,31 @@ uploaded = st.file_uploader(
 if uploaded is not None:
     try:
         # 使用 pyreadstat 讀取 SPSS .sav 檔案
-        _, raw_df = pyreadstat.read_sav(uploaded)
+        # pyreadstat.read_sav 返回 (metadata, data)
+        # 但不同版本可能返回格式不同，我們先讀到暫存再處理
+        import tempfile
+        import os
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".sav") as tmp:
+            tmp.write(uploaded.read())
+            tmp_path = tmp.name
+
+        try:
+            result = pyreadstat.read_sav(tmp_path)
+        finally:
+            os.unlink(tmp_path)
+
+        # result 可能是 (metadata, df) 或只是 df
+        if isinstance(result, (list, tuple)) and len(result) == 2:
+            metadata, raw_df = result
+        else:
+            # 有些版本直接返回 DataFrame
+            raw_df = result
+
+        # 確保是 DataFrame
+        if not isinstance(raw_df, pd.DataFrame):
+            st.error(f"讀取的資料不是 DataFrame，類型為：{type(raw_df)}")
+            st.stop()
 
         st.subheader("原始資料預覽")
         st.dataframe(raw_df.head(20), use_container_width=True)
