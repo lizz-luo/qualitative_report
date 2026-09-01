@@ -4,6 +4,10 @@ import io
 import os
 import tempfile
 import pyreadstat
+from docx import Document
+from docx.shared import Inches, Pt
+from docx.enum.table import WD_TABLE_ALIGNMENT
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 st.set_page_config(page_title="學校問卷回應整理工具（SPSS）", layout="wide")
 st.title("學校問卷回應整理工具（SPSS .sav）")
@@ -14,7 +18,7 @@ st.markdown("""
 - SchName x Q1Q2_14
 - SchName x Q1Q2_15
 
-每張表會保留每位老師的一條回應；同一學校只在首次出現時顯示名稱。
+每張表會保留每位老師的一條回應；同一學校只在首次出現時顯示名稱，並在 Word 中合併後續空白單元格。
 """)
 
 INVALID_VALUES = {"", "nil", "/", "nan", "none", "n/a", "na"}
@@ -66,6 +70,90 @@ def read_sav_file(uploaded_file):
     finally:
         if file_path and os.path.exists(file_path):
             os.remove(file_path)
+
+
+def create_word_document(tables):
+    """建立 Word 文件，包含四張表，並合併學校欄的連續空白單元格。"""
+    doc = Document()
+
+    # 標題
+    title = doc.add_heading("學校問卷回應整理報告", level=1)
+    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    for question_name, df in tables.items():
+        # 小標題
+        doc.add_heading(question_name, level=2)
+
+        # 建立表格
+        table = doc.add_table(rows=len(df) + 1, cols=2)
+        table.style = "Table Grid"
+        table.alignment = WD_TABLE_ALIGNMENT.CENTER
+
+        # 設定欄位寬度
+        for column in table.columns:
+            for cell in column.cells:
+                paragraph = cell.paragraphs[0]
+                paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
+                if column.index == 0:
+                    cell.width = Inches(2.5)
+                else:
+                    cell.width = Inches(5.0)
+
+        # 填入標題列
+        header_cells = table.rows[0].cells
+        header_cells[0].text = "學校"
+        header_cells[1].text = question_name
+
+        # 設定標題列格式
+        for cell in header_cells:
+            for paragraph in cell.paragraphs:
+                for run in paragraph.runs:
+                    run.bold = True
+                    run.font.size = Pt(10)
+                paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+        # 填入資料列
+        for row_index, (_, row_data) in enumerate(df.iterrows(), start=1):
+            row = table.rows[row_index]
+            row.cells[0].text = str(row_data["學校"]) if row_data["學校"] else ""
+            row.cells[1].text = str(row_data[question_name])
+
+            # 設定文字格式
+            for cell in row.cells:
+                for paragraph in cell.paragraphs:
+                    paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
+                    for run in paragraph.runs:
+                        run.font.size = Pt(9)
+
+        # 合併學校欄的連續空白單元格
+        # 找出連續的學校區塊（從第一個非空學校開始，到下一個非空學校前）
+        school_values = df["學校"].tolist()
+        merge_ranges = []
+        current_start = None
+
+        for i, school in enumerate(school_values, start=1):  # 從 1 開始因為第 0 列是標題
+            if school:  # 非空學校
+                if current_start is not None and current_start + 1 < i:
+                    # 前一個區塊有多個格子需要合併
+                    merge_ranges.append((current_start, i - 1))
+                current_start = i
+
+        # 處理最後一個區塊
+        if current_start is not None and current_start < len(school_values) + 1:
+            merge_ranges.append((current_start, len(school_values)))
+
+        # 執行合併
+        for start_row, end_row in merge_ranges:
+            if end_row > start_row:
+                # 合併從 start_row 到 end_row 的學校欄格子
+                first_cell = table.cell(start_row, 0)
+                for row_idx in range(start_row + 1, end_row + 1):
+                    cell_to_merge = table.cell(row_idx, 0)
+                    first_cell.merge(cell_to_merge)
+
+        doc.add_paragraph()
+
+    return doc
 
 
 uploaded = st.file_uploader("上傳 SPSS .sav 檔案", type=["sav"])
@@ -123,7 +211,7 @@ try:
                 key=f"download_{question}",
             )
 
-    # 一次下載四張表，方便直接用於報告製作。
+    # 一次下載四張表（Excel）
     excel_buffer = io.BytesIO()
     with pd.ExcelWriter(excel_buffer, engine="openpyxl") as writer:
         for question, result_df in tables.items():
@@ -136,6 +224,20 @@ try:
         file_name="SchName_feedback_tables.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         key="download_all_excel",
+    )
+
+    # 產生 Word 文件
+    doc_buffer = io.BytesIO()
+    doc = create_word_document(tables)
+    doc.save(doc_buffer)
+    doc_buffer.seek(0)
+
+    st.download_button(
+        label="下載整理後的 Word 報告",
+        data=doc_buffer,
+        file_name="SchName_feedback_report.docx",
+        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        key="download_word",
     )
 
 except Exception as error:
